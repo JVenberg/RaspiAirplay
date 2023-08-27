@@ -15,7 +15,7 @@ jobs:
     - name: Login to Docker Hub
       run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-    - name: Build and Push Docker Compose Images
+    - name: Build and Push Docker Images
       run: |
         touch .env
         docker compose build

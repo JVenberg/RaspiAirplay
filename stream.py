@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import asyncio
 import asyncio.subprocess as asp
+import logging
 import sys
 import time
-import logging
+from asyncio.exceptions import CancelledError
 
 import click
-
 import numpy as np
-
 import pyatv
 from pyatv.const import Protocol
 from pyatv.interface import MediaMetadata
@@ -34,7 +33,6 @@ class RollingVolume:
 
     def get_volume(self):
         return np.sqrt(np.mean(np.square(self.current_window)))
-
 
 
 class Recorder(asyncio.StreamReader):
@@ -68,7 +66,7 @@ class Recorder(asyncio.StreamReader):
     async def stop(self):
         if self.process is not None:
             self.process.kill()
-            await self.process.wait()
+            await self.process.communicate()
 
     def get_volume(self):
         return self.volume.get_volume()
@@ -94,7 +92,9 @@ async def stream(recorder, identifier=""):
         logger.debug(f"Connecting to {conf.address}")
         atv = await pyatv.connect(conf, loop)
 
-        metadata = MediaMetadata(artist="Raspberry PI", title="Streaming from Raspberry PI")
+        metadata = MediaMetadata(
+            artist="Raspberry PI", title="Streaming from Raspberry PI"
+        )
         await atv.stream.stream_file(recorder, metadata)
     except CancelledError:
         logger.debug("Cancelled stream")
@@ -102,7 +102,14 @@ async def stream(recorder, identifier=""):
         await asyncio.gather(*atv.close())
 
 
-async def wait_for_volume(recorder, volume_conditional_callback=None, interval=1, delay=None, drain_buffer=False, buffer_size=4096):
+async def wait_for_volume(
+    recorder,
+    volume_conditional_callback=None,
+    interval=1,
+    delay=None,
+    drain_buffer=False,
+    buffer_size=4096,
+):
     start = time.time()
 
     while True:
@@ -115,7 +122,9 @@ async def wait_for_volume(recorder, volume_conditional_callback=None, interval=1
 
         volume = recorder.get_volume()
         logger.debug(f"Volume: {volume}")
-        if (delay is None or time.time() - start > delay) and (volume_conditional_callback is None or volume_conditional_callback(volume)):
+        if (delay is None or time.time() - start > delay) and (
+            volume_conditional_callback is None or volume_conditional_callback(volume)
+        ):
             break
 
 
@@ -125,26 +134,26 @@ async def main_loop(gain=1.0, identifier=""):
             await asyncio.wait_for(
                 wait_for_volume(
                     recorder,
-                    volume_conditional_callback=lambda volume: volume > 5,
-                    drain_buffer=True
+                    volume_conditional_callback=lambda volume: volume > 0,
+                    drain_buffer=True,
                 ),
                 timeout=None,
             )
 
         logger.debug("Starting stream")
         async with Recorder(gain=gain) as recorder:
-            stream_teaks = asyncio.create_task(
-                stream(recorder, identifier)
-            )
+            stream_teaks = asyncio.create_task(stream(recorder, identifier))
             stop_task = asyncio.create_task(
                 wait_for_volume(
                     recorder,
-                    volume_conditional_callback=lambda volume: volume < 5,
-                    delay=10
+                    volume_conditional_callback=lambda volume: volume < 100,
+                    delay=10,
                 )
             )
 
-            done, pending = await asyncio.wait([stop_task, stream_teaks], return_when=asyncio.FIRST_COMPLETED)
+            _, pending = await asyncio.wait(
+                [stop_task, stream_teaks], return_when=asyncio.FIRST_COMPLETED
+            )
             for task in pending:
                 task.cancel()
         logger.debug("Stream stopped")
@@ -158,10 +167,10 @@ def main(gain, identifier):
     loop.run_until_complete(main_loop(gain, identifier))
     loop.run_forever()
 
+
 if __name__ == "__main__":
     logging.basicConfig(
-        format="%(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)]
+        format="%(message)s", handlers=[logging.StreamHandler(sys.stdout)]
     )
     logger.setLevel(logging.DEBUG)
-    main(auto_envvar_prefix='RASPI_AIRPLAY')
+    main(auto_envvar_prefix="RASPI_AIRPLAY")

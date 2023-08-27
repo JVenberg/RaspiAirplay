@@ -128,13 +128,13 @@ async def wait_for_volume(
             break
 
 
-async def main_loop(gain=1.0, identifier=""):
+async def main_loop(gain=1.0, identifier="", threshold=5):
     while True:
         async with Recorder(gain=gain) as recorder:
             await asyncio.wait_for(
                 wait_for_volume(
                     recorder,
-                    volume_conditional_callback=lambda volume: volume > 0,
+                    volume_conditional_callback=lambda volume: volume > threshold,
                     drain_buffer=True,
                 ),
                 timeout=None,
@@ -146,7 +146,7 @@ async def main_loop(gain=1.0, identifier=""):
             stop_task = asyncio.create_task(
                 wait_for_volume(
                     recorder,
-                    volume_conditional_callback=lambda volume: volume < 100,
+                    volume_conditional_callback=lambda volume: volume < threshold,
                     delay=10,
                 )
             )
@@ -162,9 +162,10 @@ async def main_loop(gain=1.0, identifier=""):
 @click.command()
 @click.option("--gain", default=1.0, type=float, help="Gain for recording")
 @click.option("--identifier", default="", help="MAC Identifier of Apple TV")
-def main(gain, identifier):
+@click.option("--threshold", default=5, help="Volume Threshold")
+def main(*args):
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main_loop(gain, identifier))
+    loop.run_until_complete(main_loop(**args))
     loop.run_forever()
 
 

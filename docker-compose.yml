@@ -1,0 +1,13 @@
+services:
+  airplay:
+    image: ${IMAGE_NAME:-airplay}
+    build: .
+    command: python /app/stream.py
+    network_mode: host
+    volumes:
+      - ./stream.py:/app/stream.py
+    devices:
+      - /dev/snd
+    restart: unless-stopped
+    env_file:
+      - .env

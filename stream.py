@@ -36,11 +36,13 @@ class RollingVolume:
 
 
 class Recorder(asyncio.StreamReader):
-    def __init__(self, gain=1.0):
+    def __init__(self, gain=1.0, sample_rate=48000, channels=2):
         super().__init__()
         self.gain = gain
+        self.sample_rate = sample_rate
+        self.channels = channels
         self.process = None
-        self.volume = RollingVolume()
+        self.volume = RollingVolume(sample_rate=sample_rate, channels=channels)
 
     async def __aenter__(self):
         await self.start()
@@ -51,7 +53,7 @@ class Recorder(asyncio.StreamReader):
 
     async def start(self):
         self.process = await asp.create_subprocess_shell(
-            f"rec -q -t wav - vol {self.gain}",
+            f"rec -r {self.sample_rate} -c {self.channels} -q -t wav - vol {self.gain}",
             stdout=asp.PIPE,
         )
 
@@ -163,9 +165,9 @@ async def main_loop(gain=1.0, identifier="", threshold=5):
 @click.option("--gain", default=1.0, type=float, help="Gain for recording")
 @click.option("--identifier", default="", help="MAC Identifier of Apple TV")
 @click.option("--threshold", default=5, help="Volume Threshold")
-def main(*args):
+def main(*args, **kwargs):
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main_loop(**args))
+    loop.run_until_complete(main_loop(*args, **kwargs))
     loop.run_forever()
 
 

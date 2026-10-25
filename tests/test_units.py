@@ -97,6 +97,24 @@ class TestVolumeMeter:
     def test_empty_meter_is_silent(self):
         assert stream.VolumeMeter(5).rms(3) == 0.0
 
+    def test_startup_transient_is_diluted_by_the_full_window(self):
+        meter = stream.VolumeMeter(50)
+        meter.add(np.full((10, 2), 10, dtype=np.int16))
+        assert meter.rms(1) == pytest.approx(10)
+        assert meter.rms(4) == pytest.approx(5)
+        assert meter.rms(100) == pytest.approx(10 / np.sqrt(50))
+
+    def test_boot_transient_stays_below_threshold(self):
+        config = stream.Config()
+        meter = stream.VolumeMeter(config.blocks(60))
+        start = config.blocks(config.start_window_seconds)
+        rng = np.random.default_rng(0)
+        for i in range(start * 2):
+            # The HiFiBerry ADC read about rms 5.2 for its first second after a cold boot.
+            rms = 5.2 if i < config.blocks(1.0) else 0.9
+            meter.add(rng.normal(0, rms, (config.block_frames, 2)).round().astype(np.int16))
+            assert meter.rms(start) <= config.threshold
+
     def test_tracks_peak_and_clipping(self):
         meter = stream.VolumeMeter(5)
         meter.add(np.array([[16384, -100], [32767, -32768]], dtype=np.int16))

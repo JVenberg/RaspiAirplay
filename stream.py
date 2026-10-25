@@ -149,11 +149,13 @@ class VolumeMeter:
         return (20 * np.log10(peak / 32768) if peak else -np.inf), clipped
 
     def rms(self, blocks):
-        n = min(blocks, self.count, len(self.mean_squares))
-        if n == 0:
+        """RMS of the last `blocks` blocks, counting blocks from before capture began as silence."""
+        n = min(blocks, len(self.mean_squares))
+        seen = min(n, self.count)
+        if seen == 0:
             return 0.0
-        idx = np.arange(self.count - n, self.count) % len(self.mean_squares)
-        return float(np.sqrt(self.mean_squares[idx].mean()))
+        idx = np.arange(self.count - seen, self.count) % len(self.mean_squares)
+        return float(np.sqrt(self.mean_squares[idx].sum() / n))
 
 
 class RateLimiter:

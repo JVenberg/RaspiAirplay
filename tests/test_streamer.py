@@ -137,17 +137,19 @@ async def test_capture_stall_ends_stream_then_recovers(make_config, recorder, re
 
 async def test_stream_rides_through_capture_restart(make_config, recorder, receiver):
     recorder.set(mode="ramp")
-    async with App(make_config()) as app:
+    async with App(make_config(underrun_timeout_seconds=5.0)) as app:
         await wait_until(lambda: receiver.active == 1)
-        await asyncio.sleep(0.5)
+        source = receiver.sessions[0].source
         recorder.set(mode="exit", code=1)
         await wait_until(lambda: app.capture.restarts >= 1, timeout=10)
+        recorder.set(mode="stall")
+        await wait_until(lambda: source.rebuffering_since is not None)
         recorder.set(mode="ramp")
-        await asyncio.sleep(2.0)
-        source = receiver.sessions[0].source
+        await wait_until(lambda: source.rebuffering_since is None, timeout=10)
+        sent = source.frames_sent
+        await wait_until(lambda: source.frames_sent > sent + 22050)
         assert receiver.active == 1 and len(receiver.sessions) == 1
-        assert source.underruns == 1
-        assert app.capture.ring.end - source.pos >= source.preroll - 4410
+        assert not source.capture_lost
         app.check()
 
 

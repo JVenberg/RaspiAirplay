@@ -31,6 +31,10 @@ if [ "$pending" -eq 0 ]; then
 else
   warn "$pending package updates pending: sudo apt-get update && sudo apt-get full-upgrade"
 fi
+if [ -e /run/reboot-required ]; then
+  pkgs=$(sort -u /run/reboot-required.pkgs 2>/dev/null | xargs)
+  warn "Reboot needed to finish updates${pkgs:+ ($pkgs)}: sudo reboot"
+fi
 
 free_gb=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
 if [ "$free_gb" -ge 2 ]; then ok "Disk: ${free_gb} GB free"; else warn "Disk: only ${free_gb} GB free"; fi

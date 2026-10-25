@@ -22,6 +22,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
 apt-get -y install alsa-utils ca-certificates curl git iw
+[ ! -e /run/reboot-required ] || reboot_needed=1
 
 step "Boot config"
 cfg=$(boot_config)

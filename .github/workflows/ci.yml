@@ -41,6 +41,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      - name: Lint host scripts
+        run: uvx --from shellcheck-py==0.11.0.1 shellcheck -x -s bash host/setup.sh host/status.sh host/common.sh
+
       - name: End-to-end tests
         run: >-
           uv run --no-project --with pytest==9.1.1 --with pytest-timeout==2.4.0 --with pytest-asyncio==1.4.0

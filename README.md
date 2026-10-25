@@ -13,6 +13,8 @@ Streams a Raspberry Pi's line-in (HiFiBerry DAC+ ADC Pro) to an AirPlay receiver
 
 ## Setup
 
+[SETUP.md](SETUP.md) takes a fresh Pi from SD card to running, and `host/status.sh` checks a Pi against it. To run just the app:
+
 ```sh
 cp sample.env .env   # set RASPI_AIRPLAY_IDENTIFIER to the receiver's MAC
 docker compose pull  # or: docker compose build

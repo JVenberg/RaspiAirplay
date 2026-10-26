@@ -32,6 +32,7 @@ async def test_streams_on_sound_and_stops_on_silence(make_config, recorder, rece
     sent = assert_contiguous(receiver.sessions[0])
     assert sent > 44100 * 1.3
     assert "stream ended: silence" in caplog.text
+    assert receiver.confs[0].services[0].properties["md"] == "0,1"
 
 
 async def test_quiet_noise_below_threshold_does_not_stream(make_config, recorder, receiver):

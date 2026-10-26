@@ -28,6 +28,7 @@ TXT = {
     "ss": "16",
     "tp": "UDP",
     "vn": "65537",
+    "md": "0,1,2",
     "am": "E2EReceiver",
 }
 # pyatv takes the colon identifier from AirPlay; features avoid bits 38/48 (AirPlay 2).
@@ -150,6 +151,10 @@ class Rtsp(asyncio.Protocol):
             extra["Audio-Jack-Status"] = "connected; type=analog"
         elif method == "RECORD":
             extra["Audio-Latency"] = "11025"
+        elif method == "SET_PARAMETER" and body.startswith(b"progress:"):
+            log("resetting on progress metadata, like a Bose soundbar")
+            self.transport.abort()
+            return
         elif method == "SET_PARAMETER":
             log("set_parameter: %s", body.decode(errors="replace").strip()[:80])
         elif method == "TEARDOWN":

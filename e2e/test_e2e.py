@@ -179,6 +179,7 @@ def test_audio_arrives_bit_exact(e2e):
     assert result["breaks"] == 0
     assert result["runs"] == 1
     assert result["ramp"] > 44100 * 6
+    assert "resetting on progress" not in e2e.receiver_logs.text
 
 
 @pytest.mark.parametrize("downtime", [0, 30])

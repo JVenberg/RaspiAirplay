@@ -4,6 +4,7 @@ import socket
 import subprocess
 import time
 from collections import deque
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -378,6 +379,26 @@ class TestDetectDeadPeer:
             transport.close()
             server.close()
             await server.wait_closed()
+
+
+class TestDropProgressMetadata:
+    def test_real_pyatv_conf_stops_advertising_progress(self):
+        from pyatv.conf import AppleTV, ManualService
+        from pyatv.protocols.raop.parsers import MetadataType, get_metadata_types
+
+        conf = AppleTV("10.0.0.5", "Bose")
+        conf.add_service(ManualService("AA:BB", stream.Protocol.RAOP, 7000, {"md": "0,1,2", "et": "0"}))
+        conf.add_service(ManualService("AA:BB", stream.Protocol.AirPlay, 7000, {"features": "0x1"}))
+        stream.drop_progress_metadata(conf)
+        types = get_metadata_types(conf.get_service(stream.Protocol.RAOP).properties)
+        assert types == MetadataType.Text | MetadataType.Artwork
+        assert "md" not in conf.get_service(stream.Protocol.AirPlay).properties
+
+    @pytest.mark.parametrize("md, expected", [("2", ""), ("2,0", "0"), ("0, 2", "0"), ("0,1", "0,1")])
+    def test_removes_only_progress(self, md, expected):
+        service = SimpleNamespace(properties={"md": md})
+        stream.drop_progress_metadata(SimpleNamespace(services=[service]))
+        assert service.properties["md"] == expected
 
 
 class TestStats:

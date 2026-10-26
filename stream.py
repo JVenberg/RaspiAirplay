@@ -396,6 +396,14 @@ def detect_dead_peer(transport, timeout):
             sock.setsockopt(level, getattr(socket, name), value)
 
 
+def drop_progress_metadata(conf):
+    """Bose soundbars reset the session on progress metadata, which a live stream can't fill anyway."""
+    for service in conf.services:
+        types = service.properties.get("md")
+        if types:
+            service.properties["md"] = ",".join(t for t in types.split(",") if t.strip() != "2")
+
+
 class Stats:
     def __init__(self):
         self.started = self.progress = time.monotonic()
@@ -444,6 +452,7 @@ class Streamer:
     async def run_session(self):
         """Stream until silence or failure; returns the reason the session ended."""
         conf = await self.discover()
+        drop_progress_metadata(conf)
         self.last_address = str(conf.address)
         logger.info("connecting to %s (%s)", conf.name, conf.address)
         loop = asyncio.get_running_loop()

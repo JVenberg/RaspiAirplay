@@ -86,6 +86,7 @@ class FakeReceiver:
         self.scans = []
         self.scan_times = []
         self.connects = 0
+        self.confs = []
         self.closes = 0
         self.active = 0
         self.received = []
@@ -107,10 +108,12 @@ class FakeReceiver:
         if self.scan == "none":
             await asyncio.sleep(min(timeout, 0.05))
             return []
-        return [SimpleNamespace(name="Fake", address=self.address, identifier="AA:BB")]
+        services = [SimpleNamespace(properties={"md": "0,1,2"})]
+        return [SimpleNamespace(name="Fake", address=self.address, identifier="AA:BB", services=services)]
 
     async def _connect(self, conf, loop):
         self.connects += 1
+        self.confs.append(conf)
         if self.connect == "hang":
             await asyncio.Event().wait()
         if self.connect == "raise":

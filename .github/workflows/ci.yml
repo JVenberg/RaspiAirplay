@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The Pi is arm64, so test on the architecture the image ships for.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          tags: airplay:test
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Unit, capture and process tests
+        run: docker run --rm -v "$PWD":/app -w /app airplay:test pytest -p no:cacheprovider -v
+
+      - name: Soak test
+        run: docker run --rm -e SOAK_SECONDS=180 -v "$PWD":/app -w /app airplay:test pytest -p no:cacheprovider -m soak -s
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Lint host scripts
+        run: uvx --from shellcheck-py==0.11.0.1 shellcheck -x -s bash host/setup.sh host/status.sh host/common.sh
+
+      - name: End-to-end tests
+        run: >-
+          uv run --no-project --with pytest==9.1.1 --with pytest-timeout==2.4.0 --with pytest-asyncio==1.4.0
+          --with numpy pytest -p no:cacheprovider -m e2e -v -s e2e/
+
+  push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/arm64
+          push: true
+          tags: |
+            jvenberg/airplay:latest
+            jvenberg/airplay:${{ github.sha }}
+          cache-from: type=gha

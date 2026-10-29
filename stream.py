@@ -404,6 +404,16 @@ def drop_progress_metadata(conf):
             service.properties["md"] = ",".join(t for t in types.split(",") if t.strip() != "2")
 
 
+def identifier_forms(identifier):
+    """Match the bare MAC RAOP uses too; Bose sometimes omits the AirPlay record."""
+    if not identifier:
+        return None
+    bare = identifier.replace(":", "").replace("-", "").upper()
+    if len(bare) != 12 or any(c not in "0123456789ABCDEF" for c in bare):
+        return {identifier}
+    return {identifier, bare, ":".join(bare[i : i + 2] for i in range(0, 12, 2))}
+
+
 class Stats:
     def __init__(self):
         self.started = self.progress = time.monotonic()
@@ -434,7 +444,7 @@ class Streamer:
 
     async def discover(self):
         loop = asyncio.get_running_loop()
-        identifier = self.config.identifier or None
+        identifiers = identifier_forms(self.config.identifier)
         protocols = {Protocol.RAOP, Protocol.AirPlay}
         attempts = []
         if self.last_address:
@@ -442,12 +452,12 @@ class Streamer:
         attempts.append(dict(timeout=self.config.scan_timeout_seconds))
         for kwargs in attempts:
             atvs = await asyncio.wait_for(
-                pyatv.scan(loop, identifier=identifier, protocol=protocols, **kwargs),
+                pyatv.scan(loop, identifier=identifiers, protocol=protocols, **kwargs),
                 kwargs["timeout"] + self.config.scan_grace_seconds,
             )
             if atvs:
                 return atvs[0]
-        raise DeviceNotFound(f"no AirPlay receiver found (identifier={identifier!r})")
+        raise DeviceNotFound(f"no AirPlay receiver found (identifier={self.config.identifier!r})")
 
     async def run_session(self):
         """Stream until silence or failure; returns the reason the session ended."""

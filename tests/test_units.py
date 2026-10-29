@@ -401,6 +401,19 @@ class TestDropProgressMetadata:
         assert service.properties["md"] == expected
 
 
+@pytest.mark.parametrize(
+    "identifier, expected",
+    [
+        ("C8:7B:23:43:96:58", {"C8:7B:23:43:96:58", "C87B23439658"}),
+        ("c87b23439658", {"c87b23439658", "C87B23439658", "C8:7B:23:43:96:58"}),
+        ("some-uuid", {"some-uuid"}),
+        ("", None),
+    ],
+)
+def test_identifier_forms(identifier, expected):
+    assert stream.identifier_forms(identifier) == expected
+
+
 class TestStats:
     def test_touch_advances_progress(self):
         stats = stream.Stats()

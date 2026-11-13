@@ -105,16 +105,60 @@ class TestVolumeMeter:
         assert meter.rms(4) == pytest.approx(5)
         assert meter.rms(100) == pytest.approx(10 / np.sqrt(50))
 
-    def test_boot_transient_stays_below_threshold(self):
-        config = stream.Config()
+    def test_loud_fraction_counts_unseen_blocks_as_quiet(self):
+        meter = stream.VolumeMeter(50)
+        meter.add(np.full((10, 2), 200, dtype=np.int16))
+        assert meter.loud_fraction(4, threshold=100) == 0.25
+        meter.add(np.full((10, 2), 50, dtype=np.int16))
+        meter.add(np.full((10, 2), 300, dtype=np.int16))
+        assert meter.loud_fraction(3, threshold=100) == pytest.approx(2 / 3)
+        assert meter.loud_fraction(1, threshold=100) == 1.0
+
+    def test_settling_blocks_are_ignored(self):
+        meter = stream.VolumeMeter(50)
+        meter.settle(3)
+        for _ in range(3):
+            meter.add(np.full((10, 2), 5000, dtype=np.int16))
+        assert meter.loud_fraction(5, threshold=100) == 0.0
+        assert meter.rms(3) == pytest.approx(5000)
+        meter.add(np.full((10, 2), 5000, dtype=np.int16))
+        assert meter.loud_fraction(5, threshold=100) == 0.2
+
+    def start_decisions(self, levels, config):
+        """Whether wait_for_sound's rule would start a stream after each block of the given rms levels."""
         meter = stream.VolumeMeter(config.blocks(60))
+        meter.settle(round(config.settle_seconds / config.block_seconds))
         start = config.blocks(config.start_window_seconds)
         rng = np.random.default_rng(0)
-        for i in range(start * 2):
-            # The HiFiBerry ADC read about rms 5.2 for its first second after a cold boot.
-            rms = 5.2 if i < config.blocks(1.0) else 0.9
+        decisions = []
+        for rms in levels:
             meter.add(rng.normal(0, rms, (config.block_frames, 2)).round().astype(np.int16))
-            assert meter.rms(start) <= config.threshold
+            decisions.append(meter.loud_fraction(start, config.threshold) >= config.start_fraction)
+        return decisions
+
+    @pytest.mark.parametrize("settle_seconds", [0.0, 5.0])
+    def test_capture_open_pop_does_not_start(self, settle_seconds):
+        config = stream.Config(settle_seconds=settle_seconds)
+        # Measured on the HiFiBerry: first capture after a reboot peaks near -73.6 dBFS, settled by 2 s.
+        levels = [1.7] * 2 + [6.8] * 5 + [4.2] * 2 + [2.4] * 3 + [1.5] * 3 + [1.0] * 5 + [0.9] * 40
+        assert not any(self.start_decisions(levels, config))
+
+    def test_loud_burst_while_settling_does_not_start(self):
+        config = stream.Config()
+        levels = [130] * config.blocks(4.5) + [0.9] * config.blocks(10)
+        assert not any(self.start_decisions(levels, config))
+
+    def test_click_does_not_start(self):
+        config = stream.Config(settle_seconds=0)
+        levels = [0.9] * 20 + [3000] * 2 + [0.9] * 40
+        assert not any(self.start_decisions(levels, config))
+
+    def test_quiet_music_starts_within_the_window(self):
+        config = stream.Config(settle_seconds=0)
+        levels = [0.9] * 20 + [20, 3, 30, 15, 2, 40, 25, 4, 12, 18] * 3
+        decisions = self.start_decisions(levels, config)
+        assert not any(decisions[:20])
+        assert decisions.index(True) - 20 < config.blocks(config.start_window_seconds)
 
     def test_tracks_peak_and_clipping(self):
         meter = stream.VolumeMeter(5)

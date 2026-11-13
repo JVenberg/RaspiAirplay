@@ -60,9 +60,18 @@ systemctl enable --now docker
 
 step "ADC mixer"
 if [ -e "/proc/asound/$CARD" ]; then
+  changes=()
   for pair in "${MIXER[@]}"; do
-    amixer -q -c "$CARD" sset "${pair%%|*}" "${pair#*|}"
+    [ "$(mixer_get "${pair%%|*}")" = "${pair#*|}" ] || changes+=("$pair")
   done
+  if [ ${#changes[@]} -gt 0 ]; then
+    # Switching input or Mic Bias makes seconds of noise the app would stream.
+    if [ -f "$REPO_DIR/.env" ]; then (cd "$REPO_DIR" && docker compose stop); fi
+    for pair in "${changes[@]}"; do
+      amixer -q -c "$CARD" sset "${pair%%|*}" "${pair#*|}"
+      echo "set ${pair%%|*} to ${pair#*|}"
+    done
+  fi
   alsactl store
 else
   echo "HiFiBerry not detected; it appears after a reboot with the new boot config."

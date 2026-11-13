@@ -17,6 +17,7 @@ def make_config(tmp_path, recorder):
             threshold=100.0,
             silence_seconds=0.6,
             start_window_seconds=0.2,
+            settle_seconds=0.0,
             preroll_seconds=0.2,
             buffer_seconds=5.0,
             max_backlog_seconds=2.0,

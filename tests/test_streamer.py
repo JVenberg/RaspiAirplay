@@ -43,6 +43,18 @@ async def test_quiet_noise_below_threshold_does_not_stream(make_config, recorder
         assert receiver.connects == 0
 
 
+async def test_sound_while_capture_settles_does_not_stream(make_config, recorder, receiver):
+    recorder.set(mode="ramp")
+    async with App(make_config(settle_seconds=1.0)) as app:
+        await asyncio.sleep(0.6)
+        recorder.set(mode="silence")
+        await asyncio.sleep(1.0)
+        assert receiver.connects == 0
+        recorder.set(mode="ramp")
+        await wait_until(lambda: receiver.active == 1)
+        app.check()
+
+
 async def test_restarts_stream_while_sound_continues(make_config, recorder, receiver, caplog):
     receiver.stream = "end"
     recorder.set(mode="ramp")

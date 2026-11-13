@@ -39,6 +39,8 @@ class Config:
     capture_cmd: tuple = ()
     block_seconds: float = 0.1
     start_window_seconds: float = 2.0
+    start_fraction: float = 0.5
+    settle_seconds: float = 5.0
     preroll_seconds: float = 1.0
     buffer_seconds: float = 30.0
     max_backlog_seconds: float = 15.0
@@ -130,6 +132,7 @@ class VolumeMeter:
     def __init__(self, history_blocks):
         self.mean_squares = np.zeros(history_blocks, dtype=np.float64)
         self.count = 0
+        self.settled_at = 0
         self.peak = 0
         self.clipped = 0
 
@@ -156,6 +159,19 @@ class VolumeMeter:
             return 0.0
         idx = np.arange(self.count - seen, self.count) % len(self.mean_squares)
         return float(np.sqrt(self.mean_squares[idx].sum() / n))
+
+    def settle(self, blocks):
+        """Ignores the next `blocks` blocks in loud_fraction, while the ADC settles after opening."""
+        self.settled_at = self.count + blocks
+
+    def loud_fraction(self, blocks, threshold):
+        """Share of the last `blocks` blocks above `threshold`; unseen and settling blocks count as quiet."""
+        n = min(blocks, len(self.mean_squares))
+        first = max(self.count - n, self.settled_at)
+        if first >= self.count:
+            return 0.0
+        idx = np.arange(first, self.count) % len(self.mean_squares)
+        return np.count_nonzero(self.mean_squares[idx] > threshold**2) / n
 
 
 class RateLimiter:
@@ -245,6 +261,7 @@ class Capture:
             stderr=asyncio.subprocess.PIPE,
         )
         logger.info("capture started (pid %d): %s", proc.pid, " ".join(self.cmd))
+        self.meter.settle(round(self.config.settle_seconds / self.config.block_seconds))
         self.clock_start = None
         stderr_task = asyncio.create_task(self._log_stderr(proc.stderr))
         problem = None
@@ -641,7 +658,7 @@ def log_status(config, capture, stats):
 async def wait_for_sound(config, capture, stats):
     stats.state = "idle"
     start_blocks = config.blocks(config.start_window_seconds)
-    while capture.stalled() or capture.meter.rms(start_blocks) <= config.threshold:
+    while capture.stalled() or capture.meter.loud_fraction(start_blocks, config.threshold) < config.start_fraction:
         stats.touch()
         await asyncio.sleep(config.poll_seconds)
 

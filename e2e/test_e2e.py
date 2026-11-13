@@ -19,6 +19,7 @@ ROOT = Path(__file__).parent.parent
 APP_IMAGE = os.environ.get("E2E_APP_IMAGE", "airplay:test")
 APP_CONFIG = {
     "start_window_seconds": 0.5,
+    "settle_seconds": 0.0,
     "preroll_seconds": 0.5,
     "scan_timeout_seconds": 3.0,
     "scan_grace_seconds": 5.0,

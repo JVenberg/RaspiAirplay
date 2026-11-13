@@ -2,12 +2,15 @@ services:
   airplay:
     image: ${IMAGE_NAME:-airplay}
     build: .
-    command: python /app/stream.py
     network_mode: host
-    volumes:
-      - ./stream.py:/app/stream.py
+    init: true
     devices:
       - /dev/snd
     restart: unless-stopped
+    stop_grace_period: 45s
     env_file:
       - .env
+    logging:
+      driver: journald
+      options:
+        tag: airplay

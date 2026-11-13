@@ -1,0 +1,4 @@
+# brcmfmac power saving can stall Wi-Fi; dhcpcd runs this at boot and on every reconnect.
+if [ "$interface" = wlan0 ]; then
+	/usr/sbin/iw dev wlan0 set power_save off
+fi

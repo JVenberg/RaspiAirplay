@@ -41,6 +41,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      - name: Lint and format check Python
+        run: uvx ruff@0.17.5 check . && uvx ruff@0.17.5 format --check .
+
       - name: Lint host scripts
         run: uvx --from shellcheck-py==0.11.0.1 shellcheck -x -s bash host/setup.sh host/status.sh host/common.sh
 

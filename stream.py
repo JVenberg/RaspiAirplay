@@ -17,9 +17,9 @@ from pathlib import Path
 import click
 import numpy as np
 import pyatv
-import pyatv.protocols.raop as raop
 from pyatv.const import Protocol
 from pyatv.interface import MediaMetadata
+from pyatv.protocols import raop
 from pyatv.protocols.raop.audio_source import AudioSource
 
 logger = logging.getLogger("airplay")
@@ -465,8 +465,8 @@ class Streamer:
         protocols = {Protocol.RAOP, Protocol.AirPlay}
         attempts = []
         if self.last_address:
-            attempts.append(dict(hosts=[self.last_address], timeout=3))
-        attempts.append(dict(timeout=self.config.scan_timeout_seconds))
+            attempts.append({"hosts": [self.last_address], "timeout": 3})
+        attempts.append({"timeout": self.config.scan_timeout_seconds})
         for kwargs in attempts:
             atvs = await asyncio.wait_for(
                 pyatv.scan(loop, identifier=identifiers, protocol=protocols, **kwargs),

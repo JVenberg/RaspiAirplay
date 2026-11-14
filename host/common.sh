@@ -19,6 +19,9 @@ WATCHDOG_FILE=etc/systemd/system.conf.d/90-raspiairplay.conf
 JOURNALD_FILE=etc/systemd/journald.conf.d/90-raspiairplay.conf
 NM_FILE=etc/NetworkManager/conf.d/90-raspiairplay.conf
 DHCPCD_FILE=etc/dhcpcd.exit-hook
+UPGRADES_FILE=etc/apt/apt.conf.d/90-raspiairplay.conf
+UPDATE_TIMER_FILE=etc/systemd/system/apt-daily.timer.d/90-raspiairplay.conf
+UPGRADE_TIMER_FILE=etc/systemd/system/apt-daily-upgrade.timer.d/90-raspiairplay.conf
 
 os_release() { sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p" /etc/os-release; }
 

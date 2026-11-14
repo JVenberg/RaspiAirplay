@@ -36,6 +36,18 @@ if [ -e /run/reboot-required ]; then
   warn "Reboot needed to finish updates${pkgs:+ ($pkgs)}: sudo reboot"
 fi
 
+if command -v unattended-upgrade >/dev/null && installed "$UPGRADES_FILE" &&
+  installed "$UPDATE_TIMER_FILE" && installed "$UPGRADE_TIMER_FILE" &&
+  systemctl is-active -q apt-daily.timer apt-daily-upgrade.timer; then
+  next=$(systemctl show -p NextElapseUSecRealtime --value apt-daily-upgrade.timer)
+  ok "Security updates install nightly, rebooting at 03:30 only if needed (next: ${next:-?})"
+  if [ "$(systemctl show -p Result --value apt-daily-upgrade.service)" != success ]; then
+    warn "Last nightly update failed: journalctl -u apt-daily-upgrade"
+  fi
+else
+  warn "Nightly security updates not set up; run host/setup.sh"
+fi
+
 free_gb=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
 if [ "$free_gb" -ge 2 ]; then ok "Disk: ${free_gb} GB free"; else warn "Disk: only ${free_gb} GB free"; fi
 

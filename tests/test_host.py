@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -109,7 +110,18 @@ EOF
 
 
 def test_config_files_exist():
-    names = bash('echo "$WATCHDOG_FILE $JOURNALD_FILE $NM_FILE $DHCPCD_FILE"').split()
-    assert len(names) == 4
+    names = bash(
+        'echo "$WATCHDOG_FILE $JOURNALD_FILE $NM_FILE $DHCPCD_FILE'
+        ' $UPGRADES_FILE $UPDATE_TIMER_FILE $UPGRADE_TIMER_FILE"'
+    ).split()
+    assert len(names) == 7
     for name in names:
         assert (HOST / "files" / name).is_file(), name
+
+
+@pytest.mark.skipif(shutil.which("apt-config") is None, reason="needs apt")
+def test_nightly_updates_config_parses():
+    conf = HOST / "files" / bash('echo "$UPGRADES_FILE"').strip()
+    out = subprocess.run(["apt-config", "-c", str(conf), "dump"], check=True, capture_output=True, text=True).stdout
+    assert 'APT::Periodic::Unattended-Upgrade "always";' in out
+    assert 'Unattended-Upgrade::Automatic-Reboot-Time "03:30";' in out

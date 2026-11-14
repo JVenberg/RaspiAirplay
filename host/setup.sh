@@ -24,6 +24,18 @@ apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold
 apt-get -y install alsa-utils ca-certificates curl git iw
 [ ! -e /run/reboot-required ] || reboot_needed=1
 
+step "Nightly security updates"
+apt-get -y install unattended-upgrades
+install_file "$UPGRADES_FILE" || true
+timers_changed=0
+install_file "$UPDATE_TIMER_FILE" && timers_changed=1
+install_file "$UPGRADE_TIMER_FILE" && timers_changed=1
+if [ "$timers_changed" -eq 1 ]; then
+  systemctl daemon-reload
+  systemctl restart apt-daily.timer apt-daily-upgrade.timer
+fi
+systemctl enable -q apt-daily.timer apt-daily-upgrade.timer
+
 step "Boot config"
 cfg=$(boot_config)
 before=$(sha256sum <"$cfg")

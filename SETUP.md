@@ -67,6 +67,7 @@ Every line should be `ok`. `WARN` lines are worth reading but don't stop the app
 | Setting | Why | Where |
 | --- | --- | --- |
 | OS packages updated | Security fixes | `apt-get full-upgrade` |
+| Debian security and point-release updates, nightly | Fetched at 02:30, installed at 03:00, and a reboot at 03:30 only when an update needs one. Nothing runs in the daytime, even after a power cut. Kernel, Docker and Tailscale updates stay manual (see Day to day) | `unattended-upgrades`, [`apt.conf.d`](host/files/etc/apt/apt.conf.d/90-raspiairplay.conf), timers in [`apt-daily.timer.d`](host/files/etc/systemd/system/apt-daily.timer.d/90-raspiairplay.conf) and [`apt-daily-upgrade.timer.d`](host/files/etc/systemd/system/apt-daily-upgrade.timer.d/90-raspiairplay.conf) |
 | HiFiBerry overlay loaded; onboard and HDMI audio off | The app records from ALSA `default`, which is card 0, so the HiFiBerry must be the only card | `config.txt` |
 | ADC on the line input, Mic Bias off, PGA 0 dB, saved | Mic Bias is for microphones; with a line source it measured no quieter on or off, so off is the safe value | `/var/lib/alsa/asound.state` |
 | Hardware watchdog, 15 s | Reboots the Pi if the OS hangs, instead of waiting for someone to pull the plug | [`system.conf.d`](host/files/etc/systemd/system.conf.d/90-raspiairplay.conf) |

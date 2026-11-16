@@ -120,7 +120,7 @@ class FakeReceiver:
             raise ConnectionRefusedError("refused")
         transport = FakeTransport()
         connection = SimpleNamespace(transport=transport)
-        client = SimpleNamespace(rtsp=SimpleNamespace(connection=connection))
+        client = SimpleNamespace(rtsp=SimpleNamespace(connection=connection), control_client=SimpleNamespace())
         manager = SimpleNamespace(stream_client=None)
         session = SimpleNamespace(
             manager=manager, client=client, connection=connection, socket=transport.socket, frames=[]

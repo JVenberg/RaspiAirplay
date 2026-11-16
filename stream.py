@@ -12,6 +12,7 @@ import socket
 import sys
 import threading
 import time
+from collections import Counter, OrderedDict
 from pathlib import Path
 
 import click
@@ -20,7 +21,9 @@ import pyatv
 from pyatv.const import Protocol
 from pyatv.interface import MediaMetadata
 from pyatv.protocols import raop
+from pyatv.protocols.raop import stream_client as raop_client
 from pyatv.protocols.raop.audio_source import AudioSource
+from pyatv.protocols.raop.fifo import PacketFifo
 
 logger = logging.getLogger("airplay")
 
@@ -46,6 +49,8 @@ class Config:
     max_backlog_seconds: float = 15.0
     capture_stall_seconds: float = 5.0
     underrun_timeout_seconds: float = 8.0
+    send_stall_warn_seconds: float = 0.2
+    nice: int = -10
     scan_timeout_seconds: float = 10.0
     scan_grace_seconds: float = 10.0
     connect_timeout_seconds: float = 30.0
@@ -93,11 +98,11 @@ class DeviceNotFound(Exception):
 
 
 class RingBuffer:
-    """Fixed-size circular store of interleaved int16 frames, indexed by absolute frame."""
+    """Circular store of interleaved int16 frames by absolute index, big-endian as pyatv sends them."""
 
     def __init__(self, capacity, channels=CHANNELS):
         self.capacity = capacity
-        self.data = np.zeros((capacity, channels), dtype=np.int16)
+        self.data = np.zeros((capacity, channels), dtype=">i2")
         self.end = 0
 
     @property
@@ -296,6 +301,17 @@ class Capture:
                 logger.warning("capture: %s", text)
 
 
+GLITCH_KEYS = (
+    "underruns",
+    "silence_s",
+    "skips",
+    "send_stalls",
+    "send_stalled_s",
+    "lost_packets",
+    "unrecovered_packets",
+)
+
+
 class LiveSource(AudioSource):
     """pyatv source playing the ring buffer; underruns play silence until the preroll refills."""
 
@@ -313,11 +329,52 @@ class LiveSource(AudioSource):
         self.silence_sent = 0
         self.underruns = 0
         self.skips = 0
+        self.send_stalls = 0
+        self.send_stalled_seconds = 0.0
+        self.packets_lost = 0
+        self.packets_unrecovered = 0
         self.capture_lost = False
         self.closed = False
+        self._glitch_limit = RateLimiter()
+        self._loss_limit = RateLimiter()
+
+    def glitches(self):
+        """Counters for everything a listener might hear as a skip."""
+        values = (
+            self.underruns,
+            self.silence_sent / SAMPLE_RATE,
+            self.skips,
+            self.send_stalls,
+            self.send_stalled_seconds,
+            self.packets_lost,
+            self.packets_unrecovered,
+        )
+        return dict(zip(GLITCH_KEYS, values, strict=True))
+
+    def receiver_lost(self, seqno, count, missing):
+        """The receiver asked for packets again; `missing` were too old to resend."""
+        self.packets_lost += count
+        self.packets_unrecovered += missing
+        if not self._loss_limit.allow():
+            return
+        if missing:
+            logger.warning("receiver lost %d packets from seq %d; %d too old to resend", count, seqno, missing)
+        else:
+            logger.info("receiver lost %d packets from seq %d; resent", count, seqno)
+
+    def _glitch(self, msg, *args):
+        if self._glitch_limit.allow():
+            logger.warning(msg, *args)
 
     async def readframes(self, nframes):
-        self.last_read = now = time.monotonic()
+        now = time.monotonic()
+        if self.last_read is not None and not self.closed:
+            gap = now - self.last_read
+            if gap > self.config.send_stall_warn_seconds:
+                self.send_stalls += 1
+                self.send_stalled_seconds += gap
+                self._glitch("audio sending stalled for %.0fms", gap * 1000)
+        self.last_read = now
         if self.closed or self.capture_lost:
             return AudioSource.NO_FRAMES
         ring = self.capture.ring
@@ -326,6 +383,7 @@ class LiveSource(AudioSource):
             self.rebuffering_since = now
         if self.rebuffering_since is not None:
             if ring.end - self.pos >= max(self.preroll, nframes):
+                self._glitch("capture fell behind; played %.1fs of silence", now - self.rebuffering_since)
                 self.rebuffering_since = None
             elif now - self.rebuffering_since > self.config.underrun_timeout_seconds:
                 self.capture_lost = True
@@ -341,8 +399,7 @@ class LiveSource(AudioSource):
         frames = ring.read(self.pos, nframes)
         self.pos += nframes
         self.frames_sent += nframes
-        # pyatv sends samples big-endian (see _to_audio_samples in pyatv's audio_source)
-        return frames.astype(">i2").tobytes()
+        return frames.astype(">i2", copy=False).tobytes()
 
     async def close(self):
         self.closed = True
@@ -382,10 +439,55 @@ async def _open_source(source, sample_rate, channels, sample_size):
 raop.open_source = _open_source
 
 
+class PacketBacklog(PacketFifo):
+    """pyatv's FIFO copies all 1000 keys per packet to evict the oldest; OrderedDict evicts in O(1)."""
+
+    def __init__(self, upper_limit):
+        super().__init__(upper_limit)
+        self._items = OrderedDict()
+
+    def __setitem__(self, index, value):
+        if not isinstance(index, int):
+            raise TypeError("only int supported as key")
+        if index in self._items:
+            raise ValueError(f"{index} already in FIFO")
+        if len(self._items) >= self._upper_limit:
+            self._items.popitem(last=False)
+        self._items[index] = value
+
+
+raop_client.PacketFifo = PacketBacklog
+
+
+def _retransmit_lost_packets(self, request, addr):
+    """pyatv's version ignores sequence wraparound and only logs at debug level."""
+    missing = 0
+    for i in range(request.lost_packets):
+        packet = self.packet_backlog.get((request.lost_seqno + i) % 2**16)
+        if packet is None:
+            missing += 1
+        elif self.transport:
+            self.transport.sendto(b"\x80\xd6" + packet[2:4] + packet, addr)
+    listener = getattr(self, "loss_listener", None)
+    if listener is not None:
+        listener.receiver_lost(request.lost_seqno, request.lost_packets, missing)
+
+
+raop_client.ControlClient._retransmit_lost_packets = _retransmit_lost_packets
+
+
+def active_stream_client(atv):
+    """pyatv's client for the active stream, or None if not streaming or internals changed."""
+    try:
+        return atv.stream.get(Protocol.RAOP).playback_manager.stream_client
+    except AttributeError:
+        return None
+
+
 def rtsp_connection(atv):
     """pyatv's RTSP connection for the active stream, or None if not streaming or internals changed."""
+    client = active_stream_client(atv)
     try:
-        client = atv.stream.get(Protocol.RAOP).playback_manager.stream_client
         return None if client is None else client.rtsp.connection
     except AttributeError:
         return None
@@ -431,15 +533,28 @@ def identifier_forms(identifier):
     return {identifier, bare, ":".join(bare[i : i + 2] for i in range(0, 12, 2))}
 
 
+def format_counts(counts):
+    return " ".join(f"{k}={v:.1f}" if isinstance(v, float) else f"{k}={v}" for k, v in counts.items())
+
+
 class Stats:
     def __init__(self):
         self.started = self.progress = time.monotonic()
         self.state = "starting"
         self.sessions = 0
         self.failures = 0
+        self.source = None
+        self.glitch_totals = Counter(dict.fromkeys(GLITCH_KEYS, 0))
 
     def touch(self):
         self.progress = time.monotonic()
+
+    def glitches(self):
+        """Glitch counters summed over every session, including the one in progress."""
+        totals = Counter(self.glitch_totals)
+        if self.source is not None:
+            totals.update(self.source.glitches())
+        return totals
 
 
 def process_stats():
@@ -490,6 +605,7 @@ class Streamer:
             MediaMetadata(artist="Raspberry PI", title="Streaming from Raspberry PI"),
         )
         stream_task = asyncio.create_task(atv.stream.stream_file(source))
+        self.stats.source = source
         reason = "cancelled"
         try:
             reason = await self._monitor(atv, stream_task, source)
@@ -498,15 +614,17 @@ class Streamer:
             reason = f"{type(ex).__name__}: {ex}"
             raise
         finally:
-            await self._shutdown(atv, stream_task, source)
-            logger.info(
-                "stream ended: %s (%.0fs sent, %d underruns, %.1fs silence inserted, %d skips)",
-                reason,
-                source.frames_sent / SAMPLE_RATE,
-                source.underruns,
-                source.silence_sent / SAMPLE_RATE,
-                source.skips,
-            )
+            try:
+                await self._shutdown(atv, stream_task, source)
+            finally:
+                self.stats.source = None
+                self.stats.glitch_totals.update(source.glitches())
+                logger.info(
+                    "stream ended: %s (%.0fs sent, %s)",
+                    reason,
+                    source.frames_sent / SAMPLE_RATE,
+                    format_counts(source.glitches()),
+                )
 
     async def _monitor(self, atv, stream_task, source):
         silence_blocks = self.config.blocks(self.config.silence_seconds)
@@ -530,6 +648,9 @@ class Streamer:
             if not announced:
                 announced = True
                 logger.info("streaming started after %.1fs", source.last_read - source.created)
+                control = getattr(active_stream_client(atv), "control_client", None)
+                if control is not None:
+                    control.loss_listener = source
                 connection = rtsp_connection(atv)
                 if connection is not None and connection.transport is not None:
                     try:
@@ -638,7 +759,7 @@ def log_status(config, capture, stats):
     drift = capture.drift_ppm()
     logger.info(
         "status: state=%s rms_1s=%.1f rms_%.0fs=%.1f peak=%.1fdBFS clipped=%d sessions=%d failures=%d "
-        "capture_restarts=%d drift_ppm=%s tasks=%d uptime=%.1fh %s",
+        "capture_restarts=%d drift_ppm=%s %s tasks=%d uptime=%.1fh %s",
         stats.state,
         meter.rms(config.blocks(1.0)),
         config.silence_seconds,
@@ -649,6 +770,7 @@ def log_status(config, capture, stats):
         stats.failures,
         capture.restarts,
         "n/a" if drift is None else f"{drift:+.1f}",
+        format_counts(stats.glitches()),
         len(asyncio.all_tasks()),
         (time.monotonic() - stats.started) / 3600,
         " ".join(f"{k}={v}" for k, v in process_stats().items()),
@@ -732,6 +854,14 @@ async def amain(config):
         die(f"fatal: {ex}", code=1, dump_stacks=False)
 
 
+def set_nice(nice):
+    """Lets audio win the CPU over logins and other work; threads and sox started later inherit it."""
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, nice)
+    except OSError as ex:
+        logger.warning("could not set nice %d (needs CAP_SYS_NICE): %s", nice, ex)
+
+
 @click.command()
 @click.option("--gain", default=1.0, type=float, help="Gain for recording")
 @click.option("--identifier", default="", help="Identifier (MAC) of the AirPlay receiver")
@@ -755,6 +885,7 @@ def main(log_level, **kwargs):
     faulthandler.enable()
     config = Config(**kwargs)
     logger.info("starting with %s", config)
+    set_nice(config.nice)
     asyncio.run(amain(config))
 
 

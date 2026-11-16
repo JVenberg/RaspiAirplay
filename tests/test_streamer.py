@@ -31,6 +31,8 @@ async def test_streams_on_sound_and_stops_on_silence(make_config, recorder, rece
         assert app.stats.sessions == 1 and app.stats.failures == 0
     sent = assert_contiguous(receiver.sessions[0])
     assert sent > 44100 * 1.3
+    assert receiver.sessions[0].client.control_client.loss_listener is receiver.sessions[0].source
+    assert "unrecovered_packets=0" in caplog.text
     assert "stream ended: silence" in caplog.text
     assert receiver.confs[0].services[0].properties["md"] == "0,1"
 
@@ -237,7 +239,17 @@ async def test_heartbeat_touches_file_and_logs_status(make_config, recorder, cap
     heartbeat = tmp_path / "heartbeat"
     assert time.time() - heartbeat.stat().st_mtime < 5
     line = next(line for line in caplog.text.splitlines() if "status:" in line)
-    for field in ("rms_1s=", "peak=", "clipped=", "drift_ppm=", "rss_mb=", "fds=", "threads=", "tasks="):
+    for field in (
+        "rms_1s=",
+        "peak=",
+        "clipped=",
+        "drift_ppm=",
+        "send_stalls=",
+        "rss_mb=",
+        "fds=",
+        "threads=",
+        "tasks=",
+    ):
         assert field in line
 
 

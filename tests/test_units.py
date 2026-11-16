@@ -351,6 +351,90 @@ class TestLiveSource:
         assert (source.sample_rate, source.channels, source.sample_size, source.duration) == (44100, 2, 2, 0)
         assert asyncio.run(source.get_metadata()) == "meta"
 
+    async def test_logs_send_stalls(self, make_config, caplog):
+        config, capture = self.make(make_config, send_stall_warn_seconds=0.05)
+        capture.feed(44100)
+        source = stream.LiveSource(capture, config, None)
+        await source.readframes(352)
+        await source.readframes(352)
+        assert source.send_stalls == 0
+        await asyncio.sleep(0.08)
+        await source.readframes(352)
+        assert source.send_stalls == 1 and source.send_stalled_seconds >= 0.08
+        assert "audio sending stalled for" in caplog.text
+        await source.close()
+        await asyncio.sleep(0.08)
+        await source.readframes(352)
+        assert source.send_stalls == 1
+
+    async def test_logs_underrun_when_capture_catches_up(self, make_config, caplog):
+        config, capture = self.make(make_config)
+        capture.feed(100)
+        source = stream.LiveSource(capture, config, None)
+        await source.readframes(352)
+        assert "silence" not in caplog.text
+        capture.feed(4410)
+        await source.readframes(352)
+        assert "capture fell behind; played" in caplog.text
+
+    def test_counts_receiver_losses(self, make_config, caplog):
+        config, capture = self.make(make_config)
+        source = stream.LiveSource(capture, config, None)
+        source.receiver_lost(10, 3, 0)
+        source.receiver_lost(500, 2, 2)
+        assert (source.packets_lost, source.packets_unrecovered) == (5, 2)
+        assert "lost 3 packets from seq 10; resent" in caplog.text
+        assert "2 too old to resend" in caplog.text
+        glitches = source.glitches()
+        assert tuple(glitches) == stream.GLITCH_KEYS
+        assert (glitches["lost_packets"], glitches["unrecovered_packets"]) == (5, 2)
+
+
+class TestPyatvPatches:
+    def test_backlog_evicts_oldest_insert(self):
+        fifo = stream.PacketBacklog(3)
+        for seqno in (65534, 65535, 0, 1):
+            fifo[seqno] = bytes([seqno % 256])
+        assert list(fifo) == [65535, 0, 1]
+        assert 65534 not in fifo and fifo[0] == b"\x00"
+        with pytest.raises(ValueError):
+            fifo[1] = b""
+        with pytest.raises(TypeError):
+            fifo["1"] = b""
+
+    async def test_stream_client_uses_backlog(self):
+        client = stream.raop_client.StreamClient(None, None, None, None)
+        assert isinstance(client._packet_backlog, stream.PacketBacklog)
+
+    def test_retransmit_resends_across_wraparound_and_reports(self):
+        backlog = stream.PacketBacklog(10)
+        for seqno in (65535, 0):
+            backlog[seqno] = b"\x80\x60" + seqno.to_bytes(2, "big") + b"audio"
+        control = stream.raop_client.ControlClient(None, backlog)
+        sent, losses = [], []
+        control.transport = SimpleNamespace(sendto=lambda data, addr: sent.append((data, addr)))
+        control.loss_listener = SimpleNamespace(receiver_lost=lambda *args: losses.append(args))
+        request = stream.raop_client.RetransmitReqeust.encode(0x80, 0xD5, 1, 65535, 3)
+        control.datagram_received(request, ("10.0.0.5", 6001))
+        assert [data for data, _ in sent] == [
+            b"\x80\xd6\xff\xff\x80\x60\xff\xffaudio",
+            b"\x80\xd6\x00\x00\x80\x60\x00\x00audio",
+        ]
+        assert losses == [(65535, 3, 1)]
+
+    def test_retransmit_without_listener(self):
+        control = stream.raop_client.ControlClient(None, stream.PacketBacklog(10))
+        control._retransmit_lost_packets(SimpleNamespace(lost_seqno=5, lost_packets=2), None)
+
+
+def test_set_nice_warns_without_permission(monkeypatch, caplog):
+    def deny(*args):
+        raise PermissionError("not permitted")
+
+    monkeypatch.setattr(stream.os, "setpriority", deny)
+    stream.set_nice(-10)
+    assert "could not set nice -10" in caplog.text
+
 
 class TestOpenSourcePatch:
     def test_installed_on_pyatv(self):
@@ -465,6 +549,20 @@ class TestStats:
         time.sleep(0.01)
         stats.touch()
         assert stats.progress > before
+
+    def test_glitches_sum_finished_and_active_sessions(self, make_config):
+        stats = stream.Stats()
+        assert stream.format_counts(stats.glitches()).startswith("underruns=0 silence_s=0 skips=0")
+        config = make_config()
+        source = stream.LiveSource(FakeCapture(config), config, None)
+        source.receiver_lost(1, 4, 1)
+        stats.glitch_totals.update(source.glitches())
+        stats.source = stream.LiveSource(FakeCapture(config), config, None)
+        stats.source.send_stalls = 2
+        stats.source.silence_sent = 22050
+        glitches = stats.glitches()
+        assert (glitches["lost_packets"], glitches["unrecovered_packets"], glitches["send_stalls"]) == (4, 1, 2)
+        assert "silence_s=0.5" in stream.format_counts(glitches)
 
 
 class TestLogLoopError:

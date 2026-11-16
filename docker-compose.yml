@@ -6,6 +6,8 @@ services:
     init: true
     devices:
       - /dev/snd
+    cap_add:
+      - SYS_NICE
     restart: unless-stopped
     stop_grace_period: 45s
     env_file:

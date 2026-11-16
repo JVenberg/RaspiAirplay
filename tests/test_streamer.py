@@ -80,6 +80,7 @@ async def test_restarts_stream_while_sound_continues(make_config, recorder, rece
         ("stream", "stall", "stream stalled"),
         ("stream", "raise", "RuntimeError: protocol error"),
         ("stream", "disconnect", "receiver closed connection"),
+        ("stream", "unsynced", "receiver stopped playing (no clock sync for"),
     ],
 )
 async def test_recovers_from_receiver_fault(make_config, recorder, receiver, caplog, attr, behaviour, message):

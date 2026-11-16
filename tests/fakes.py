@@ -67,7 +67,7 @@ class FakeTransport:
 class FakeReceiver:
     """Scriptable replacement for pyatv's scan, connect, stream_file and close.
 
-    stream behaviours: play, hang_setup, stall, raise, end, disconnect, zombie.
+    stream behaviours: play, hang_setup, stall, raise, end, disconnect, zombie, unsynced.
     close behaviours: ok, hang, raise.
     """
 
@@ -120,7 +120,11 @@ class FakeReceiver:
             raise ConnectionRefusedError("refused")
         transport = FakeTransport()
         connection = SimpleNamespace(transport=transport)
-        client = SimpleNamespace(rtsp=SimpleNamespace(connection=connection), control_client=SimpleNamespace())
+        client = SimpleNamespace(
+            rtsp=SimpleNamespace(connection=connection),
+            control_client=SimpleNamespace(),
+            timing_server=SimpleNamespace(last_request=None),
+        )
         manager = SimpleNamespace(stream_client=None)
         session = SimpleNamespace(
             manager=manager, client=client, connection=connection, socket=transport.socket, frames=[]
@@ -145,6 +149,7 @@ class FakeReceiver:
             session.manager.stream_client = session.client
             source = await stream.raop.open_source(source, 44100, 2, 2)
             session.source = source
+            unsynced = self.stream == "unsynced"
             started = time.monotonic()
             sent = padding = 0
             while padding < self.LATENCY_FRAMES:
@@ -159,6 +164,8 @@ class FakeReceiver:
                     while not self.released:
                         with contextlib.suppress(asyncio.CancelledError):
                             await asyncio.sleep(0.01)
+                if not (unsynced and elapsed > self.stream_after):
+                    session.client.timing_server.last_request = time.monotonic()
                 frames = await source.readframes(352)
                 if frames:
                     if self.keep_frames:

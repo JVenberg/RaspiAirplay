@@ -426,6 +426,20 @@ class TestPyatvPatches:
         control = stream.raop_client.ControlClient(None, stream.PacketBacklog(10))
         control._retransmit_lost_packets(SimpleNamespace(lost_seqno=5, lost_packets=2), None)
 
+    def test_timing_server_records_requests_and_still_replies(self):
+        assert stream.raop_client.TimingServer is stream.raop_protocols.TimingServer
+        server = stream.raop_protocols.TimingServer()
+        sent = []
+        server.transport = SimpleNamespace(sendto=lambda data, addr: sent.append(addr))
+        request = stream.raop_protocols.TimingPacket.encode(0x80, 0xD2, 7, 0, 0, 0, 0, 0, 1, 2)
+        before = time.monotonic()
+        server.datagram_received(request, ("10.0.0.5", 7038))
+        assert server.last_request >= before
+        assert sent == [("10.0.0.5", 7038)]
+
+    def test_last_clock_sync_unknown_when_internals_missing(self):
+        assert stream.last_clock_sync(object()) is None
+
 
 def test_set_nice_warns_without_permission(monkeypatch, caplog):
     def deny(*args):

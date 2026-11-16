@@ -21,6 +21,7 @@ import pyatv
 from pyatv.const import Protocol
 from pyatv.interface import MediaMetadata
 from pyatv.protocols import raop
+from pyatv.protocols.raop import protocols as raop_protocols
 from pyatv.protocols.raop import stream_client as raop_client
 from pyatv.protocols.raop.audio_source import AudioSource
 from pyatv.protocols.raop.fifo import PacketFifo
@@ -57,6 +58,7 @@ class Config:
     setup_timeout_seconds: float = 30.0
     stream_stall_seconds: float = 10.0
     receiver_timeout_seconds: float = 15.0
+    receiver_sync_timeout_seconds: float = 20.0
     stop_timeout_seconds: float = 15.0
     min_backoff_seconds: float = 1.0
     max_backoff_seconds: float = 60.0
@@ -475,6 +477,16 @@ def _retransmit_lost_packets(self, request, addr):
 
 raop_client.ControlClient._retransmit_lost_packets = _retransmit_lost_packets
 
+_original_timing_received = raop_protocols.TimingServer.datagram_received
+
+
+def _timing_received(self, data, addr):
+    self.last_request = time.monotonic()
+    _original_timing_received(self, data, addr)
+
+
+raop_protocols.TimingServer.datagram_received = _timing_received
+
 
 def active_stream_client(atv):
     """pyatv's client for the active stream, or None if not streaming or internals changed."""
@@ -482,6 +494,12 @@ def active_stream_client(atv):
         return atv.stream.get(Protocol.RAOP).playback_manager.stream_client
     except AttributeError:
         return None
+
+
+def last_clock_sync(atv):
+    """When the receiver last asked for clock sync, or None if it never has or internals changed."""
+    server = getattr(active_stream_client(atv), "timing_server", None)
+    return getattr(server, "last_request", None)
 
 
 def rtsp_connection(atv):
@@ -661,6 +679,9 @@ class Streamer:
                 return "stream stalled"
             if receiver_connected(atv) is False:
                 return "receiver closed connection"
+            last_sync = last_clock_sync(atv)
+            if last_sync is not None and now - last_sync > self.config.receiver_sync_timeout_seconds:
+                return f"receiver stopped playing (no clock sync for {now - last_sync:.0f}s)"
             if (
                 now - started >= self.config.silence_seconds
                 and self.capture.meter.rms(silence_blocks) < self.config.threshold

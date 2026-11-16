@@ -27,6 +27,7 @@ def make_config(tmp_path, recorder):
             "connect_timeout_seconds": 0.5,
             "setup_timeout_seconds": 0.5,
             "stream_stall_seconds": 0.5,
+            "receiver_sync_timeout_seconds": 1.0,
             "stop_timeout_seconds": 0.9,
             "min_backoff_seconds": 0.05,
             "max_backoff_seconds": 0.2,
